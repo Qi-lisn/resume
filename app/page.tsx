@@ -1,65 +1,742 @@
-import Image from "next/image";
+'use client';
+
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+
+type LoadingState = 'idle' | 'analyzing' | 'optimizing' | 'completed';
+
+type ParseStatus = {
+  isParsing: boolean;
+  message: string;
+  progress?: number;
+};
+
+type OptimizationProgress = {
+  isProcessing: boolean;
+  currentStep: number;
+  totalSteps: number;
+  steps: { name: string; status: 'pending' | 'inProgress' | 'completed' }[];
+};
+
+type OptimizationTab = 'rewrite' | 'star' | 'keyword' | 'score' | 'all';
+
+type OptimizationData = {
+  keywordMatch: string;
+  contentRewrite: string;
+  starPrinciple: string;
+  atsScore: number;
+  suggestions: string[];
+};
+
+// 文件上传组件
+function FileUpload({
+  onFileSelect,
+  accept,
+  acceptText,
+  disabled
+}: {
+  onFileSelect: (file: File) => void;
+  accept: string;
+  acceptText: string;
+  disabled?: boolean;
+}) {
+  const [isDragging, setIsDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!disabled) {
+      setIsDragging(true);
+    }
+  }, [disabled]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    if (disabled) return;
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      onFileSelect(files[0]);
+    }
+  }, [onFileSelect, disabled]);
+
+  const handleClick = () => {
+    if (!disabled && inputRef.current) {
+      inputRef.current.click();
+    }
+  };
+
+  return (
+    <div
+      onClick={handleClick}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`
+        p-4 rounded-lg border-2 border-dashed transition-all duration-200
+        ${isDragging
+          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+          : 'border-slate-300 dark:border-slate-600 hover:border-blue-400 dark:hover:border-blue-500'
+        }
+        ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+      `}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        onChange={(e) => {
+          const files = e.target.files;
+          if (files && files.length > 0) {
+            onFileSelect(files[0]);
+          }
+        }}
+        className="hidden"
+        disabled={disabled}
+      />
+      <div className="text-center">
+        <svg
+          className="mx-auto h-8 w-8 text-slate-400"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+          />
+        </svg>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+          点击上传或拖拽文件到此处
+        </p>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          支持格式: {acceptText}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// 优化结果标签页组件
+function OptimizationTabs({
+  activeTab,
+  onTabChange,
+  hasData
+}: {
+  activeTab: OptimizationTab;
+  onTabChange: (tab: OptimizationTab) => void;
+  hasData: boolean;
+}) {
+  const tabs = [
+    { key: 'all' as OptimizationTab, label: '全部' },
+    { key: 'keyword' as OptimizationTab, label: '关键词匹配' },
+    { key: 'rewrite' as OptimizationTab, label: '简历重写' },
+    { key: 'star' as OptimizationTab, label: 'STAR 原则' },
+    { key: 'score' as OptimizationTab, label: 'ATS 评分' },
+  ];
+
+  return (
+    <div className="flex gap-2 mb-4 flex-wrap">
+      {tabs.map(tab => (
+        <button
+          key={tab.key}
+          onClick={() => hasData ? onTabChange(tab.key) : undefined}
+          className={`
+            px-4 py-2 rounded-lg text-sm font-medium transition-colors
+            ${
+              !hasData
+                ? 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400 cursor-not-allowed'
+                : activeTab === tab.key
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600'
+            }
+          `}
+          disabled={!hasData}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ATS 评分卡片组件
+function ATSScoreCard({ score }: { score: number }) {
+  const getScoreColor = (s: number) => {
+    if (s >= 80) return 'text-green-600 dark:text-green-400';
+    if (s >= 60) return 'text-yellow-600 dark:text-yellow-400';
+    if (s >= 40) return 'text-orange-600 dark:text-orange-400';
+    return 'text-red-600 dark:text-red-400';
+  };
+
+  const getScoreLabel = (s: number) => {
+    if (s >= 80) return '优秀';
+    if (s >= 60) return '良好';
+    if (s >= 40) return '中等';
+    return '需改进';
+  };
+
+  return (
+    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-lg p-6 mb-4">
+      <h3 className="text-lg font-semibold mb-4 text-slate-800 dark:text-white">ATS 评分</h3>
+      <div className="flex items-center gap-6">
+        <div className="text-6xl font-bold" style={{ color: getScoreColor(score) }}>
+          {score}
+        </div>
+        <div className="text-center">
+          <div className="text-sm text-slate-600 dark:text-slate-300">评分等级</div>
+          <div className={`text-2xl font-bold ${getScoreColor(score)}`}>
+            {getScoreLabel(score)}
+          </div>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-5 gap-2 text-xs text-slate-600 dark:text-slate-300">
+        <div className="text-center p-2 bg-white dark:bg-slate-700 rounded">
+          <div className="font-semibold mb-1">关键词匹配</div>
+          <div>{score * 0.3.toFixed(0)}/30</div>
+        </div>
+        <div className="text-center p-2 bg-white dark:bg-slate-700 rounded">
+          <div className="font-semibold mb-1">格式规范</div>
+          <div>{score * 0.2.toFixed(0)}/20</div>
+        </div>
+        <div className="text-center p-2 bg-white dark:bg-slate-700 rounded">
+          <div className="font-semibold mb-1">内容完整</div>
+          <div>{score * 0.2.toFixed(0)}/20</div>
+        </div>
+        <div className="text-center p-2 bg-white dark:bg-slate-700 rounded">
+          <div className="font-semibold mb-1">表达清晰</div>
+          <div>{score * 0.15.toFixed(0)}/15</div>
+        </div>
+        <div className="text-center p-2 bg-white dark:bg-slate-700 rounded">
+          <div className="font-semibold mb-1">专业术语</div>
+          <div>{score * 0.15.toFixed(0)}/15</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 建议列表组件
+function SuggestionsList({ suggestions }: { suggestions: string[] }) {
+  if (suggestions.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-6 mb-4">
+      <h3 className="text-lg font-semibold mb-4 text-slate-800 dark:text-white">改进建议</h3>
+      <ul className="space-y-3">
+        {suggestions.map((suggestion, index) => (
+          <li key={index} className="flex items-start gap-3">
+            <span className="text-amber-600 dark:text-amber-400 font-bold text-lg">
+              {index + 1}.
+            </span>
+            <span className="text-slate-700 dark:text-slate-300">
+              {suggestion}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export default function Home() {
+  const [resumeText, setResumeText] = useState('');
+  const [jobDescription, setJobDescription] = useState('');
+  const [loadingState, setLoadingState] = useState<LoadingState>('idle');
+  const [parseStatus, setParseStatus] = useState<ParseStatus>({ isParsing: false, message: '' });
+  const [optimizationProgress, setOptimizationProgress] = useState<OptimizationProgress>({
+    isProcessing: false,
+    currentStep: 0,
+    totalSteps: 5,
+    steps: [
+      { name: '关键词匹配分析', status: 'pending' },
+      { name: '简历内容重写', status: 'pending' },
+      { name: 'STAR 原则优化', status: 'pending' },
+      { name: 'ATS 评分计算', status: 'pending' },
+      { name: '生成改进建议', status: 'pending' },
+    ]
+  });
+  const jdTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const [optimizedData, setOptimizedData] = useState<OptimizationData | null>(null);
+  const [activeTab, setActiveTab] = useState<OptimizationTab>('all');
+
+  const startOptimization = async () => {
+    if (!resumeText.trim() || !jobDescription.trim()) {
+      setParseStatus({
+        isParsing: false,
+        message: '请先输入简历内容和职位描述'
+      });
+      setTimeout(() => setParseStatus({ isParsing: false, message: '' }), 3000);
+      return;
+    }
+
+    setLoadingState('analyzing');
+    setOptimizationProgress(prev => ({
+      ...prev,
+      isProcessing: true,
+      currentStep: 0,
+      steps: prev.steps.map((s, i) => ({
+        ...s,
+        status: i === 0 ? 'inProgress' : 'pending' as const
+      }))
+    }));
+
+    // 使用 useRef 来存储定时器 ID
+    const timerRef = { current: null as NodeJS.Timeout | null };
+
+    // 设置进度更新定时器（每 5 秒更新一次进度）
+    timerRef.current = setInterval(() => {
+      setOptimizationProgress(prev => {
+        if (prev.currentStep >= prev.totalSteps - 1) return prev;
+
+        const nextStep = prev.currentStep + 1;
+        return {
+          ...prev,
+          currentStep: nextStep,
+          steps: prev.steps.map((step, i) => ({
+            ...step,
+            status: i < nextStep ? 'completed' : i === nextStep ? 'inProgress' : 'pending' as const
+          }))
+        };
+      });
+    }, 5000);
+
+    try {
+      const response = await fetch('/api/optimize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          resumeText,
+          jobDescription,
+        }),
+      });
+
+      // 清除定时器
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+
+      const result = await response.json();
+
+      if (result.success) {
+        setOptimizationProgress(prev => ({
+          ...prev,
+          isProcessing: false,
+          currentStep: prev.totalSteps,
+          steps: prev.steps.map(s => ({ ...s, status: 'completed' as const }))
+        }));
+        setOptimizedData(result.data);
+        setLoadingState('completed');
+      } else {
+        throw new Error(result.error || '优化失败');
+      }
+    } catch (error) {
+      console.error('优化错误:', error);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+      setLoadingState('idle');
+      setOptimizationProgress(prev => ({
+        ...prev,
+        isProcessing: false
+      }));
+      setParseStatus({
+        isParsing: false,
+        message: `优化失败: ${(error as Error).message}`
+      });
+      setTimeout(() => setParseStatus({ isParsing: false, message: '' }), 3000);
+    }
+  };
+
+  // 前端 OCR 函数
+  const performOCR = async (file: File, targetField: 'resume' | 'jd') => {
+    try {
+      setParseStatus({
+        isParsing: true,
+        message: '正在初始化 OCR...',
+        progress: 0
+      });
+
+      // 动态导入 tesseract.js
+      const Tesseract = (await import('tesseract.js')).default;
+
+      // 前端 OCR 识别
+      const result = await Tesseract.recognize(
+        file,
+        'chi_sim+eng',
+        {
+          logger: (m) => {
+            if (m.status === 'recognizing text' && m.progress !== undefined) {
+              setParseStatus({
+                isParsing: true,
+                message: `正在识别文字... ${Math.round(m.progress * 100)}%`,
+                progress: m.progress
+              });
+            } else if (m.status === 'loading tesseract core') {
+              setParseStatus({
+                isParsing: true,
+                message: '正在加载 OCR 核心组件...',
+                progress: 0.1
+              });
+            } else if (m.status === 'initializing tesseract') {
+              setParseStatus({
+                isParsing: true,
+                message: '正在初始化 OCR 引擎...',
+                progress: 0.2
+              });
+            } else if (m.status === 'loading language traineddata') {
+              setParseStatus({
+                isParsing: true,
+                message: '正在下载语言包...',
+                progress: 0.3
+              });
+            }
+          }
+        }
+      );
+
+      const text = result.data.text;
+
+      if (targetField === 'resume') {
+        setResumeText(text);
+      } else {
+        setJobDescription(text);
+      }
+
+      setParseStatus({ isParsing: false, message: '' });
+    } catch (error) {
+      console.error('图片识别错误:', error);
+      setParseStatus({
+        isParsing: false,
+        message: `识别失败: ${(error as Error).message}`
+      });
+      setTimeout(() => setParseStatus({ isParsing: false, message: '' }), 3000);
+    }
+  };
+
+  // 解析文件（Word 用后端，图片用前端 OCR）
+  const parseFile = async (file: File, targetField: 'resume' | 'jd') => {
+    try {
+      const fileExtension = file.name.split('.').pop()?.toLowerCase() || '';
+
+      // 暂时只支持 Word 和图片，PDF 解析功能暂时禁用
+      if (fileExtension === 'pdf') {
+        setParseStatus({
+          isParsing: false,
+          message: 'PDF 解析功能暂时不可用，请使用 Word 文档或图片，或直接粘贴文本'
+        });
+        setTimeout(() => setParseStatus({ isParsing: false, message: '' }), 5000);
+        return;
+      }
+
+      // 图片使用前端 OCR
+      if (['png', 'jpg', 'jpeg'].includes(fileExtension)) {
+        await performOCR(file, targetField);
+        return;
+      }
+
+      // Word 文档使用后端解析
+      if (fileExtension === 'docx') {
+        setParseStatus({ isParsing: true, message: '正在解析 Word 文档...', progress: 0.5 });
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch('/api/parse', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+          throw new Error(result.error || '解析失败');
+        }
+
+        if (targetField === 'resume') {
+          setResumeText(result.text);
+        } else {
+          setJobDescription(result.text);
+        }
+
+        setParseStatus({ isParsing: false, message: '' });
+      }
+    } catch (error) {
+      console.error('文件解析错误:', error);
+      setParseStatus({
+        isParsing: false,
+        message: `解析失败: ${(error as Error).message}`
+      });
+      setTimeout(() => setParseStatus({ isParsing: false, message: '' }), 3000);
+    }
+  };
+
+  // 简历上传区域的图片解析（目标字段为 'resume'）
+  const parseImageFile = async (file: File) => {
+    await performOCR(file, 'jd');
+  };
+
+  // 剪贴板粘贴功能
+  useEffect(() => {
+    const handlePaste = async (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (const item of items) {
+        if (item.type.indexOf('image') !== -1) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (file) {
+            await parseImageFile(file);
+          }
+          break;
+        }
+      }
+    };
+
+    const textarea = jdTextareaRef.current;
+    if (textarea) {
+      textarea.addEventListener('paste', handlePaste);
+      return () => {
+        textarea.removeEventListener('paste', handlePaste);
+      };
+    }
+  }, []);
+
+  // 根据当前标签渲染内容
+  const renderOptimizationContent = () => {
+    if (!optimizedData) return null;
+
+    const showAll = activeTab === 'all';
+
+    return (
+      <div className="space-y-4">
+        {/* ATS 评分 */}
+        {(showAll || activeTab === 'score') && <ATSScoreCard score={optimizedData.atsScore} />}
+
+        {/* 建议列表 */}
+        {(showAll || activeTab === 'score') && <SuggestionsList suggestions={optimizedData.suggestions} />}
+
+        {/* 关键词匹配 */}
+        {(showAll || activeTab === 'keyword') && (
+          <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-6">
+            <h3 className="text-lg font-semibold mb-4 text-slate-800 dark:text-white">关键词匹配分析</h3>
+            <div className="prose dark:prose-invert max-w-none text-sm">
+              <ReactMarkdown>{optimizedData.keywordMatch}</ReactMarkdown>
+            </div>
+          </div>
+        )}
+
+        {/* 简历重写 */}
+        {(showAll || activeTab === 'rewrite') && (
+          <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-6">
+            <h3 className="text-lg font-semibold mb-4 text-slate-800 dark:text-white">简历内容重写</h3>
+            <div className="prose dark:prose-invert max-w-none text-sm">
+              <ReactMarkdown>{optimizedData.contentRewrite}</ReactMarkdown>
+            </div>
+          </div>
+        )}
+
+        {/* STAR 原则 */}
+        {(showAll || activeTab === 'star') && (
+          <div className="bg-rose-50 dark:bg-rose-900/20 rounded-lg p-6">
+            <h3 className="text-lg font-semibold mb-4 text-slate-800 dark:text-white">STAR 原则优化</h3>
+            <div className="prose dark:prose-invert max-w-none text-sm">
+              <ReactMarkdown>{optimizedData.starPrinciple}</ReactMarkdown>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-gray-900 dark:to-gray-800">
+      <div className="max-w-7xl mx-auto p-6">
+        <header className="mb-8">
+          <h1 className="text-3xl font-bold text-slate-800 dark:text-white">
+            ATS 简历优化工具
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="text-slate-600 dark:text-slate-300 mt-2">
+            AI 驱动的智能简历优化
           </p>
+        </header>
+
+        {parseStatus.message && (
+          <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+            <div className="flex items-center gap-2">
+              {parseStatus.isParsing ? (
+                <span className="animate-spin">⚙️</span>
+              ) : (
+                <span>ℹ️</span>
+              )}
+              <span className="text-sm text-blue-800 dark:text-blue-200">
+                {parseStatus.message}
+              </span>
+            </div>
+            {parseStatus.isParsing && parseStatus.progress !== undefined && (
+              <div className="mt-3">
+                <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 dark:bg-blue-400 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${Math.max(2, parseStatus.progress * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-6 h-[calc(100vh-200px)]">
+          <div className="w-1/2 flex flex-col gap-4">
+            <div className="flex-1 flex flex-col">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                原简历文本
+              </label>
+
+              <FileUpload
+                onFileSelect={(file) => parseFile(file, 'resume')}
+                accept=".docx,.png,.jpg,.jpeg"
+                acceptText="Word (前端解析), PNG/JPG (前端 OCR)"
+                disabled={parseStatus.isParsing || loadingState !== 'idle'}
+              />
+
+              <textarea
+                value={resumeText}
+                onChange={(e) => setResumeText(e.target.value)}
+                placeholder="请粘贴您的原始简历内容，或上传文件自动提取..."
+                className="flex-1 w-full p-4 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-gray-800 text-slate-800 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none mt-2"
+                disabled={parseStatus.isParsing || loadingState !== 'idle'}
+              />
+            </div>
+
+            <div className="flex-1 flex flex-col">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                目标岗位 JD
+              </label>
+
+              <FileUpload
+                onFileSelect={parseImageFile}
+                accept=".png,.jpg,.jpeg"
+                acceptText="PNG/JPG (前端 OCR, 支持 Ctrl+V / Cmd+V 粘贴截图)"
+                disabled={parseStatus.isParsing || loadingState !== 'idle'}
+              />
+
+              <textarea
+                ref={jdTextareaRef}
+                value={jobDescription}
+                onChange={(e) => setJobDescription(e.target.value)}
+                placeholder="请粘贴目标岗位的职位描述，或上传图片自动识别..."
+                className="flex-1 w-full p-4 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-gray-800 text-slate-800 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none mt-2"
+                disabled={parseStatus.isParsing || loadingState !== 'idle'}
+              />
+            </div>
+
+            <button
+              onClick={startOptimization}
+              disabled={parseStatus.isParsing || loadingState !== 'idle'}
+              className="w-full py-4 px-6 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium rounded-lg transition-colors duration-200 flex items-center justify-center gap-2"
+            >
+              {loadingState === 'analyzing' && (
+                <>
+                  <span className="animate-spin">⚙️</span>
+                  分析中...
+                </>
+              )}
+              {loadingState === 'optimizing' && (
+                <>
+                  <span className="animate-spin">⚙️</span>
+                  优化中...
+                </>
+              )}
+              {loadingState === 'idle' && '开始优化'}
+              {loadingState === 'completed' && '优化完成'}
+            </button>
+          </div>
+
+          <div className="w-1/2 flex flex-col">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+              优化结果
+            </label>
+            <div className="flex-1 overflow-auto rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-gray-800 p-6">
+              {/* 优化进度显示 */}
+              {optimizationProgress.isProcessing && (
+                <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="animate-spin">⚙️</span>
+                      <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                        正在优化中... ({optimizationProgress.currentStep}/{optimizationProgress.totalSteps})
+                      </span>
+                    </div>
+                    <span className="text-xs text-blue-600 dark:text-blue-300">
+                      {Math.round((optimizationProgress.currentStep / optimizationProgress.totalSteps) * 100)}%
+                    </span>
+                  </div>
+                  {/* 进度条 */}
+                  <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2 mb-3">
+                    <div
+                      className="bg-blue-600 dark:bg-blue-400 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${(optimizationProgress.currentStep / optimizationProgress.totalSteps) * 100}%` }}
+                    />
+                  </div>
+                  {/* 步骤列表 */}
+                  <div className="space-y-2">
+                    {optimizationProgress.steps.map((step, index) => (
+                      <div key={index} className="flex items-center gap-2 text-xs">
+                        {step.status === 'completed' && (
+                          <span className="text-green-600 dark:text-green-400">✓</span>
+                        )}
+                        {step.status === 'inProgress' && (
+                          <span className="animate-spin text-blue-600 dark:text-blue-400">⚙️</span>
+                        )}
+                        {step.status === 'pending' && (
+                          <span className="text-slate-400 dark:text-slate-500">○</span>
+                        )}
+                        <span className={
+                          step.status === 'completed'
+                            ? 'text-green-700 dark:text-green-300 font-medium'
+                            : step.status === 'inProgress'
+                            ? 'text-blue-700 dark:text-blue-300 font-medium'
+                            : 'text-slate-600 dark:text-slate-400'
+                        }>
+                          {step.name}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 空状态 */}
+              {!optimizedData && loadingState === 'idle' && !optimizationProgress.isProcessing && (
+                <div className="h-full flex items-center justify-center text-slate-400 dark:text-slate-500">
+                  <p>优化结果将在这里显示</p>
+                </div>
+              )}
+
+              {/* 优化结果内容 */}
+              {optimizedData && renderOptimizationContent()}
+            </div>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      </div>
     </div>
   );
 }
