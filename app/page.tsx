@@ -28,6 +28,21 @@ type OptimizationData = {
   suggestions: string[];
 };
 
+type ResultTab = 'resume' | 'study' | 'interview';
+
+type StudyPlanData = {
+  learningPoints: string[];
+  recommendedResources: string[];
+};
+
+type InterviewData = {
+  questions: Array<{
+    question: string;
+    answer: string;
+    analysis: string;
+  }>;
+};
+
 // 文件上传组件
 function FileUpload({
   onFileSelect,
@@ -273,6 +288,12 @@ export default function Home() {
   const jdTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [optimizedData, setOptimizedData] = useState<OptimizationData | null>(null);
   const [activeTab, setActiveTab] = useState<OptimizationTab>('all');
+  const [resultTab, setResultTab] = useState<ResultTab>('resume');
+  const [studyPlanData, setStudyPlanData] = useState<StudyPlanData | null>(null);
+  const [interviewData, setInterviewData] = useState<InterviewData | null>(null);
+  const [isGeneratingStudyPlan, setIsGeneratingStudyPlan] = useState(false);
+  const [isGeneratingInterview, setIsGeneratingInterview] = useState(false);
+  const resumeContentRef = useRef<HTMLDivElement>(null);
 
   const startOptimization = async () => {
     if (!resumeText.trim() || !jobDescription.trim()) {
@@ -343,6 +364,13 @@ export default function Home() {
         }));
         setOptimizedData(result.data);
         setLoadingState('completed');
+
+        // 简历优化完成后，立即在后台触发学习计划和面试生成
+        // 静默调用，不阻塞用户界面
+        setTimeout(() => {
+          generateStudyPlan();
+          generateInterview();
+        }, 100);
       } else {
         throw new Error(result.error || '优化失败');
       }
@@ -359,6 +387,112 @@ export default function Home() {
       setParseStatus({
         isParsing: false,
         message: `优化失败: ${(error as Error).message}`
+      });
+      setTimeout(() => setParseStatus({ isParsing: false, message: '' }), 3000);
+    }
+  };
+
+  // 生成学习计划
+  const generateStudyPlan = async () => {
+    setIsGeneratingStudyPlan(true);
+    try {
+      const response = await fetch('/api/study-plan', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          resumeText,
+          jobDescription,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setStudyPlanData(result.data);
+      }
+    } catch (error) {
+      console.error('学习计划生成错误:', error);
+    } finally {
+      setIsGeneratingStudyPlan(false);
+    }
+  };
+
+  // 生成面试题
+  const generateInterview = async () => {
+    setIsGeneratingInterview(true);
+    try {
+      const response = await fetch('/api/interview', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          resumeText,
+          jobDescription,
+          optimizedResume: optimizedData?.contentRewrite || '',
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setInterviewData(result.data);
+      }
+    } catch (error) {
+      console.error('面试题生成错误:', error);
+    } finally {
+      setIsGeneratingInterview(false);
+    }
+  };
+
+  // PDF 下载函数
+  const downloadAsPDF = async () => {
+    if (!resumeContentRef.current) {
+      setParseStatus({
+        isParsing: false,
+        message: '无法导出 PDF：简历内容未加载'
+      });
+      setTimeout(() => setParseStatus({ isParsing: false, message: '' }), 3000);
+      return;
+    }
+
+    try {
+      const html2canvas = (await import('html2canvas')).default;
+      const jsPDF = (await import('jspdf')).default;
+
+      const canvas = await html2canvas(resumeContentRef.current, {
+        scale: 2,
+        useCORS: true,
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgWidth = 210;
+      const pageHeight = 297;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight;
+
+      let position = 0;
+
+      while (heightLeft >= 0) {
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, Math.min(imgHeight, heightLeft));
+        heightLeft -= pageHeight;
+        position -= pageHeight;
+      }
+
+      pdf.save('ATS优化简历.pdf');
+      setParseStatus({
+        isParsing: false,
+        message: 'PDF 下载成功'
+      });
+      setTimeout(() => setParseStatus({ isParsing: false, message: '' }), 3000);
+    } catch (error) {
+      console.error('PDF 导出错误:', error);
+      setParseStatus({
+        isParsing: false,
+        message: `PDF 导出失败: ${(error as Error).message}`
       });
       setTimeout(() => setParseStatus({ isParsing: false, message: '' }), 3000);
     }
@@ -674,52 +808,89 @@ export default function Home() {
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
               优化结果
             </label>
-            <div className="flex-1 overflow-auto rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-gray-800 p-6">
+
+            {/* 选项卡 */}
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={() => setResultTab('resume')}
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                  resultTab === 'resume'
+                    ? 'bg-blue-600 text-white shadow-md'
+                    : 'bg-white dark:bg-gray-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-gray-600 border border-slate-200 dark:border-slate-600'
+                }`}
+              >
+                📄 优化后简历
+              </button>
+              <button
+                onClick={() => setResultTab('study')}
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                  resultTab === 'study'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'bg-white dark:bg-gray-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-gray-600 border border-slate-200 dark:border-slate-600'
+                }`}
+              >
+                📚 核心学习计划
+              </button>
+              <button
+                onClick={() => setResultTab('interview')}
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                  resultTab === 'interview'
+                    ? 'bg-rose-600 text-white shadow-md'
+                    : 'bg-white dark:bg-gray-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-gray-600 border border-slate-200 dark:border-slate-600'
+                }`}
+              >
+                🎤 定制面试题
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-gray-800">
               {/* 优化进度显示 */}
               {optimizationProgress.isProcessing && (
-                <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="animate-spin">⚙️</span>
-                      <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
-                        正在优化中... ({optimizationProgress.currentStep}/{optimizationProgress.totalSteps})
-                      </span>
-                    </div>
-                    <span className="text-xs text-blue-600 dark:text-blue-300">
-                      {Math.round((optimizationProgress.currentStep / optimizationProgress.totalSteps) * 100)}%
-                    </span>
-                  </div>
-                  {/* 进度条 */}
-                  <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2 mb-3">
-                    <div
-                      className="bg-blue-600 dark:bg-blue-400 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${(optimizationProgress.currentStep / optimizationProgress.totalSteps) * 100}%` }}
-                    />
-                  </div>
-                  {/* 步骤列表 */}
-                  <div className="space-y-2">
-                    {optimizationProgress.steps.map((step, index) => (
-                      <div key={index} className="flex items-center gap-2 text-xs">
-                        {step.status === 'completed' && (
-                          <span className="text-green-600 dark:text-green-400">✓</span>
-                        )}
-                        {step.status === 'inProgress' && (
-                          <span className="animate-spin text-blue-600 dark:text-blue-400">⚙️</span>
-                        )}
-                        {step.status === 'pending' && (
-                          <span className="text-slate-400 dark:text-slate-500">○</span>
-                        )}
-                        <span className={
-                          step.status === 'completed'
-                            ? 'text-green-700 dark:text-green-300 font-medium'
-                            : step.status === 'inProgress'
-                            ? 'text-blue-700 dark:text-blue-300 font-medium'
-                            : 'text-slate-600 dark:text-slate-400'
-                        }>
-                          {step.name}
+                <div className="p-6">
+                  <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="animate-spin">⚙️</span>
+                        <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                          正在优化中... ({optimizationProgress.currentStep}/{optimizationProgress.totalSteps})
                         </span>
                       </div>
-                    ))}
+                      <span className="text-xs text-blue-600 dark:text-blue-300">
+                        {Math.round((optimizationProgress.currentStep / optimizationProgress.totalSteps) * 100)}%
+                      </span>
+                    </div>
+                    {/* 进度条 */}
+                    <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2 mb-3">
+                      <div
+                        className="bg-blue-600 dark:bg-blue-400 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${(optimizationProgress.currentStep / optimizationProgress.totalSteps) * 100}%` }}
+                      />
+                    </div>
+                    {/* 步骤列表 */}
+                    <div className="space-y-2">
+                      {optimizationProgress.steps.map((step, index) => (
+                        <div key={index} className="flex items-center gap-2 text-xs">
+                          {step.status === 'completed' && (
+                            <span className="text-green-600 dark:text-green-400">✓</span>
+                          )}
+                          {step.status === 'inProgress' && (
+                            <span className="animate-spin text-blue-600 dark:text-blue-400">⚙️</span>
+                          )}
+                          {step.status === 'pending' && (
+                            <span className="text-slate-400 dark:text-slate-500">○</span>
+                          )}
+                          <span className={
+                            step.status === 'completed'
+                              ? 'text-green-700 dark:text-green-300 font-medium'
+                              : step.status === 'inProgress'
+                              ? 'text-blue-700 dark:text-blue-300 font-medium'
+                              : 'text-slate-600 dark:text-slate-400'
+                          }>
+                            {step.name}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -731,8 +902,134 @@ export default function Home() {
                 </div>
               )}
 
-              {/* 优化结果内容 */}
-              {optimizedData && renderOptimizationContent()}
+              {/* 选项卡内容 */}
+              {optimizedData && (
+                <>
+                  {/* 简历选项卡 */}
+                  {resultTab === 'resume' && (
+                    <div className="p-6">
+                      {/* PDF 下载按钮 */}
+                      <div className="mb-4">
+                        <button
+                          onClick={downloadAsPDF}
+                          disabled={!optimizedData.contentRewrite}
+                          className="w-full py-3 px-6 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-medium rounded-lg transition-all duration-200 flex items-center justify-center gap-2 shadow-md"
+                        >
+                          📥 下载 ATS 友好版 PDF
+                        </button>
+                      </div>
+
+                      {/* 简历内容区域（用于 PDF 导出） */}
+                      <div ref={resumeContentRef} className="prose dark:prose-invert max-w-none bg-white dark:bg-gray-900 p-6 rounded-lg">
+                        <ReactMarkdown>{optimizedData.contentRewrite}</ReactMarkdown>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 学习计划选项卡 */}
+                  {resultTab === 'study' && (
+                    <div className="p-6">
+                      {isGeneratingStudyPlan ? (
+                        <div className="flex flex-col items-center justify-center py-12">
+                          <span className="animate-spin text-6xl mb-4">🦞</span>
+                          <p className="text-purple-700 dark:text-purple-300 font-medium">
+                            龙虾正在为您定制学习计划...
+                          </p>
+                        </div>
+                      ) : studyPlanData ? (
+                        <div className="space-y-6">
+                          <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-6">
+                            <h3 className="text-lg font-semibold mb-4 text-purple-800 dark:text-purple-200 flex items-center gap-2">
+                              <span>📚</span>
+                              学习重点
+                            </h3>
+                            <ul className="space-y-3">
+                              {studyPlanData.learningPoints.map((point, index) => (
+                                <li key={index} className="flex items-start gap-3">
+                                  <span className="text-purple-600 dark:text-purple-400 font-bold mt-1">{index + 1}.</span>
+                                  <span className="text-slate-700 dark:text-slate-300">{point}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-6">
+                            <h3 className="text-lg font-semibold mb-4 text-indigo-800 dark:text-indigo-200 flex items-center gap-2">
+                              <span>💻</span>
+                              推荐资源
+                            </h3>
+                            <ul className="space-y-2">
+                              {studyPlanData.recommendedResources.map((resource, index) => (
+                                <li key={index} className="flex items-start gap-2 text-slate-700 dark:text-slate-300">
+                                  <span className="text-indigo-600 dark:text-indigo-400">•</span>
+                                  {resource}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center py-12 text-slate-400 dark:text-slate-500">
+                          <p>等待简历优化完成后生成学习计划...</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 面试题选项卡 */}
+                  {resultTab === 'interview' && (
+                    <div className="p-6">
+                      {isGeneratingInterview ? (
+                        <div className="flex flex-col items-center justify-center py-12">
+                          <span className="animate-spin text-6xl mb-4">🦞</span>
+                          <p className="text-rose-700 dark:text-rose-300 font-medium">
+                            龙虾正在为您定制面试题...
+                          </p>
+                        </div>
+                      ) : interviewData ? (
+                        <div className="space-y-4">
+                          {interviewData.questions.map((qa, index) => (
+                            <div key={index} className="bg-rose-50 dark:bg-rose-900/20 rounded-lg p-6">
+                              <div className="flex items-start gap-2 mb-3">
+                                <span className="flex-shrink-0 w-8 h-8 bg-rose-600 dark:bg-rose-400 text-white rounded-full flex items-center justify-center font-bold">
+                                  {index + 1}
+                                </span>
+                                <div className="flex-1">
+                                  <h4 className="text-base font-semibold text-rose-800 dark:text-rose-200 mb-2">
+                                    {qa.question}
+                                  </h4>
+                                </div>
+                              </div>
+                              <div className="space-y-3 ml-10">
+                                <div>
+                                  <span className="text-sm font-semibold text-green-700 dark:text-green-400 mb-1">
+                                    💡 推荐回答：
+                                  </span>
+                                  <p className="text-sm text-slate-700 dark:text-slate-300 mt-2">
+                                    {qa.answer}
+                                  </p>
+                                </div>
+                                <div>
+                                  <span className="text-sm font-semibold text-blue-700 dark:text-blue-400 mb-1">
+                                    🎯 深挖点解析：
+                                  </span>
+                                  <p className="text-sm text-slate-700 dark:text-slate-300 mt-2">
+                                    {qa.analysis}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center py-12 text-slate-400 dark:text-slate-500">
+                          <p>等待简历优化完成后生成面试题...</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
