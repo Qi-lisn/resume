@@ -32,9 +32,18 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { resumeText, jobDescription, optimizedResume } = body;
 
-    if (!resumeText || !jobDescription) {
+    if (!resumeText || !jobDescription || !optimizedResume) {
       return NextResponse.json(
-        { error: '缺少简历文本或职位描述' },
+        { error: '缺少必要的输入数据：简历文本、职位描述或优化后简历' },
+        { status: 400 }
+      );
+    }
+
+    // 检查数据是否过短或为占位符
+    const minLength = 50;
+    if (resumeText.length < minLength || jobDescription.length < minLength || optimizedResume.length < minLength) {
+      return NextResponse.json(
+        { error: '输入数据不完整，请确保简历和职位描述包含足够的内容' },
         { status: 400 }
       );
     }
@@ -48,120 +57,91 @@ export async function POST(request: NextRequest) {
       messages: [
         {
           role: 'system',
-          content: `你是一位该岗位严苛的高级业务总监，拥有 15+ 年技术管理和面试经验。你擅长发现简历中的薄弱环节，设计深挖问题来验证候选人的真实能力。
+          content: `你是一位该岗位严苛的高级业务总监。请根据【优化后的简历】和【目标岗位 JD】，生成 20 道完全不同的高频面试题。
 
-## 你的职责：
-1. 仔细阅读【优化后的简历】和【目标岗位 JD】
-2. 针对简历中通过 STAR 法则（Situation、Task、Action、Result）写出的工作经历
-3. 生成 20 道完全不同的高频面试题
+要求：
+1. 必须使用中文
+2. 20 道题必须完全不同，不允许重复
+3. 涵盖不同维度：技术深挖、架构设计、跨团队协作、异常处理、项目复盘
 
-## 绝对规则（严禁重复）：
-
-### 问题维度分配
-必须生成以下 20 道题，每道题必须完全不同，不允许出现相同的知识点或项目细节：
-
-1. **底层技术深挖题（5 道）**
-   - 深入技术原理、底层实现机制
-   - 性能优化、内存管理
-   - 并发处理、异步机制
-   - 示例：HashMap 底层原理、线程池实现、垃圾回收机制
-
-2. **系统架构/业务逻辑题（5 道）**
-   - 微服务架构设计
-   - 分布式系统一致性
-   - 数据库设计策略
-   - 业务流程优化
-   - 示例：如何设计秒杀系统、数据库分库分表策略、分布式锁实现
-
-3. **跨部门协作/软技能题（5 道）**
-   - 团队冲突解决
-   - 代码 Review 态度
-   - 跨团队协作机制
-   - 技术决策过程
-   - 示例：如何处理团队技术分歧、如何推动技术债务偿还
-
-4. **极端异常场景处理题（3 道）**
-   - 线上故障排查
-   - 性能问题诊断
-   - 紧急修复策略
-   - 示例：线上 OOM 如何处理、数据库连接池耗尽如何应对
-
-5. **过往项目踩坑复盘题（2 道）**
-   - 项目中的重大失误
-   - 从中学到的教训
-   - 改进措施
-   - 示例：曾经遇到的最严重的生产问题、如果重来会如何改进
-
-## 界面允许
-- ❌ 绝对不允许任何两道题呈现相同的知识点
-- ❌ 绝对不允许任何两道题描述同一个项目的细节
-- ❌ 绝对不允许任何两道题问类似的问题
-
-## 输出格式
-必须使用 JSON 格式，格式如下：
-{
-  "questions": [
-    {
-      "question": "问题描述（20-30 字）",
-      "answer": "基于 STAR 原则的满分回答框架（2-4 句话）",
-      "analysis": "面试官意图意图，可能深挖的方向，准备要点（30-50 字）"
-    }
-  ]
-}
-
-## 答案要求
-- 使用 STAR 原则：Situation（情境）、Task（任务）、Action（行动）、Result（结果）
-- 简洁有力，突出关键能力
-- 每个答案不超过 80 字`,
+输出格式：
+必须返回纯 JSON 格式，不要包含任何其他文字、代码块标记或说明：
+{"questions":[{"question":"问题描述","answer":"基于 STAR 原则的参考答案","analysis":"深挖方向"}]}`,
         },
         {
           role: 'user',
-          content: `请为以下简历和职位描述生成 20 道完全不同的高频面试题：
-
-【目标岗位 JD】
+          content: `【目标岗位 JD】
 ${jobDescription}
 
-【原始简历】
-${resumeText}
-
 【优化后简历】
-${optimizedResume}
-
-请严格按照上述维度分配生成 20 道题，确保每道题都不同。`,
+${optimizedResume}`,
         },
       ],
-      temperature: 0.4, // 降低温度以减少重复和幻觉
-      max_tokens: 2500, // 限制输出长度
+      temperature: 0.4,
+      max_tokens: 16000,
       response_format: { type: 'json_object' },
     });
 
     const content = response.choices[0]?.message?.content || '{}';
 
-    // 解析 JSON 响应
+    // 清理可能存在的 markdown 代码块标记（处理多种可能的格式）
+    let cleanedContent = content;
+    cleanedContent = cleanedContent.replace(/^```json\s*\n/i, ''); // 移除开头的 ```json
+    cleanedContent = cleanedContent.replace(/^```\s*\n/i, ''); // 移除开头的 ```
+    cleanedContent = cleanedContent.replace(/\n```$/g, ''); // 移除结尾的 ```
+    cleanedContent = cleanedContent.trim();
+
+    // 先尝试解析 JSON，如果失败再检查是否为错误消息
     let parsed: InterviewResult;
     try {
-      parsed = JSON.parse(content);
+      parsed = JSON.parse(cleanedContent);
     } catch (e) {
-      console.error('JSON 解析错误:', content);
-      // 如果解析失败，返回错误
+      // 解析失败，检查是否以 { 开头
+      if (!cleanedContent.startsWith('{')) {
+        console.error('模型返回了非 JSON 格式的响应:', cleanedContent.substring(0, 200));
+        return NextResponse.json(
+          { error: '面试题生成失败：模型返回了错误信息，请检查输入数据是否完整' },
+          { status: 500 }
+        );
+      }
+
+      // 如果以 { 开头但解析失败，可能是 JSON 不完整或格式错误
+      console.error('JSON 解析错误（可能被截断）:', cleanedContent.substring(0, 500));
       return NextResponse.json(
-        { error: '面试题解析失败' },
+        { error: '面试题生成失败：响应数据不完整或格式错误，请重试' },
         { status: 500 }
       );
     }
 
-    // 验证问题数量
-    if (!parsed.questions || parsed.questions.length !== 20) {
+    // 验证问题数量和格式
+    if (!parsed.questions || !Array.isArray(parsed.questions) || parsed.questions.length === 0) {
       console.error('问题数量不正确:', parsed.questions?.length);
       return NextResponse.json(
-        { error: '面试题生成失败：问题数量不正确' },
+        { error: '面试题生成失败：未生成有效的问题' },
         { status: 500 }
       );
+    }
+
+    // 验证每个问题的格式
+    const validQuestions = parsed.questions.filter(q =>
+      q.question && q.answer && q.analysis
+    );
+
+    if (validQuestions.length === 0) {
+      return NextResponse.json(
+        { error: '面试题生成失败：所有问题格式不正确' },
+        { status: 500 }
+      );
+    }
+
+    // 如果问题数量不足20个，仍然返回已生成的（但记录警告）
+    if (validQuestions.length !== 20) {
+      console.warn(`生成了 ${validQuestions.length} 个问题，期望 20 个`);
     }
 
     return NextResponse.json({
       success: true,
-      data: parsed,
+      data: { questions: validQuestions },
     });
   } catch (error) {
     console.error('面试题生成错误:', error);

@@ -421,6 +421,12 @@ export default function Home() {
 
   // 生成面试题
   const generateInterview = async () => {
+    // 等待优化完成
+    if (!optimizedData || !optimizedData.contentRewrite) {
+      console.log('等待优化完成后再生成面试题');
+      return;
+    }
+
     setIsGeneratingInterview(true);
     try {
       const response = await fetch('/api/interview', {
@@ -431,7 +437,7 @@ export default function Home() {
         body: JSON.stringify({
           resumeText,
           jobDescription,
-          optimizedResume: optimizedData?.contentRewrite || '',
+          optimizedResume: optimizedData.contentRewrite,
         }),
       });
 
@@ -439,9 +445,21 @@ export default function Home() {
 
       if (result.success) {
         setInterviewData(result.data);
+      } else {
+        console.error('面试题生成失败:', result.error);
+        setParseStatus({
+          isParsing: false,
+          message: `面试题生成失败: ${result.error}`
+        });
+        setTimeout(() => setParseStatus({ isParsing: false, message: '' }), 5000);
       }
     } catch (error) {
       console.error('面试题生成错误:', error);
+      setParseStatus({
+        isParsing: false,
+        message: `面试题生成错误: ${(error as Error).message}`
+      });
+      setTimeout(() => setParseStatus({ isParsing: false, message: '' }), 5000);
     } finally {
       setIsGeneratingInterview(false);
     }
@@ -652,6 +670,20 @@ export default function Home() {
       };
     }
   }, []);
+
+  // 当切换到学习计划选项卡时，触发生成（如果未生成）
+  useEffect(() => {
+    if (resultTab === 'study' && !studyPlanData && !isGeneratingStudyPlan && optimizedData && optimizedData.contentRewrite) {
+      generateStudyPlan();
+    }
+  }, [resultTab]);
+
+  // 当切换到面试题选项卡时，触发生成（如果未生成）
+  useEffect(() => {
+    if (resultTab === 'interview' && !interviewData && !isGeneratingInterview && optimizedData && optimizedData.contentRewrite) {
+      generateInterview();
+    }
+  }, [resultTab]);
 
   // 根据当前标签渲染内容
   const renderOptimizationContent = () => {
